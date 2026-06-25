@@ -51,6 +51,8 @@ jobs:
         run: pip install -r publishing/requirements.txt
 
       - name: Build PDF
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: python3.9 publishing/make_pdf.py
 
       - name: Publish to GitHub Release

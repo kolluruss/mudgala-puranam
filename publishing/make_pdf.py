@@ -5,16 +5,18 @@ Front matter → TOC → Chapters
 Page size: 5.5 × 8.5 in, Ponnala titles, Gidugu body/shlokas.
 """
 
-import re, urllib.request
+import io, os, re, subprocess, sys, urllib.request
 from pathlib import Path
 from html import escape as esc
 
-BASE         = Path("/Users/admin/dev/book-writing/mudgala-puranam")
+BASE         = Path(__file__).resolve().parent.parent
 CHAPTERS     = BASE / "chapters"
 IMAGES       = BASE / "images"
 FRONT_MATTER = BASE / "front-matter"
-FONTS_DIR    = Path("/Users/admin/dev/book-writing/mudgala-puranam/publishing/fonts_cache")
+FONTS_DIR    = BASE / "publishing" / "fonts_cache"
 OUTPUT       = str(BASE / "pdfs" / "mudgala-puranam.pdf")
+
+GDRIVE_FOLDER_ID = "14KFkKgeSjzv9JhgJzQ-aEJNe2uX5gJ8X"
 
 FONT_URLS = {
     "Ponnala.ttf":
@@ -33,15 +35,68 @@ def download_fonts():
         if not fp.exists():
             print(f"  Downloading {fname}…")
             urllib.request.urlretrieve(url, fp)
-    gs_cache = Path("/Users/admin/dev/book-writing/ganapati_sambhavam/fonts_cache")
-    for fname in FONT_URLS:
-        fp = FONTS_DIR / fname
-        if not fp.exists():
-            alt = gs_cache / fname
-            if alt.exists():
-                import shutil
-                shutil.copy(alt, fp)
     print("  Fonts ready.")
+
+
+# ─── Google Drive image sync ────────────────────────────────────
+
+def _ensure_package(pkg):
+    import_name = {"google-api-python-client": "googleapiclient"}.get(pkg, pkg)
+    try:
+        __import__(import_name)
+    except ImportError:
+        print(f"  Installing {pkg}…", flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", pkg, "-q"])
+
+
+def sync_images_from_gdrive(force=False):
+    """Download all PNG images from the Google Drive folder into images/.
+    Requires GOOGLE_API_KEY env var; the Drive folder must be shared as
+    'Anyone with the link' (Viewer).
+    """
+    existing = list(IMAGES.glob("*.png"))
+    if existing and not force:
+        print(f"  Images cached: {len(existing)} files in {IMAGES}")
+        return
+
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print("  WARNING: GOOGLE_API_KEY not set — skipping image download")
+        return
+
+    _ensure_package("google-api-python-client")
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+
+    IMAGES.mkdir(exist_ok=True)
+    service = build("drive", "v3", developerKey=api_key)
+
+    print(f"  Syncing images from Drive folder {GDRIVE_FOLDER_ID}…", flush=True)
+    files, page_token = [], None
+    while True:
+        resp = service.files().list(
+            q=f"'{GDRIVE_FOLDER_ID}' in parents and trashed=false",
+            fields="nextPageToken, files(id, name)",
+            pageSize=1000,
+            pageToken=page_token,
+        ).execute()
+        files.extend(resp.get("files", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    pngs = [f for f in files if f["name"].lower().endswith(".png")]
+    print(f"  Found {len(pngs)} PNG images", flush=True)
+    for f in pngs:
+        dest = IMAGES / f["name"]
+        req  = service.files().get_media(fileId=f["id"])
+        buf  = io.FileIO(dest, mode="wb")
+        dl   = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _, done = dl.next_chunk()
+        print(f"    {f['name']}", flush=True)
+    print(f"  Downloaded {len(pngs)} images.")
 
 
 # ─── Inline markdown → HTML ────────────────────────────────────
@@ -430,8 +485,20 @@ body {{ font-family:'Gidugu',sans-serif; font-size:9pt; line-height:1.45; color:
 # ─── Main ──────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-download", action="store_true",
+                        help="Skip Google Drive image sync (use cached images)")
+    parser.add_argument("--force-download", action="store_true",
+                        help="Re-download images even if already cached")
+    args = parser.parse_args()
+
     print("Downloading fonts…")
     download_fonts()
+
+    if not args.no_download:
+        print("Syncing images from Google Drive…")
+        sync_images_from_gdrive(force=args.force_download)
 
     ch_files = sorted(
         CHAPTERS.glob('ch-*.md'),

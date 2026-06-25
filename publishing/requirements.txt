@@ -1,1 +1,2 @@
 weasyprint
+google-api-python-client
