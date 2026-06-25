@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+# Generated output
+pdfs/
+
+# Raw working directories (scans, drafts, intermediate files)
+done/
+images/
+raw/
+raw-images/
+raw_images_2/
+
+# Claude Code working directory
+.claude/
+
+# Publishing credentials
+publishing/gdrive_credentials.json
+publishing/gdrive_token.json
